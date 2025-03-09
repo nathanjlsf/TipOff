@@ -1,5 +1,6 @@
 from flask import Flask, jsonify
-from nba_api.live.nba.endpoints import scoreboard
+from flask_cors import CORS
+from nba_api.live.nba.endpoints import scoreboard, playbyplay, boxscore
 from pymongo import MongoClient
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
@@ -12,6 +13,9 @@ import csv
 
 # Flask App
 app = Flask(__name__)
+
+# Enable CORS
+CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})  # Allow the frontend running at localhost:5173
 
 # Set timezone to Pacific Standard Time (PST)
 PST = pytz.timezone("America/Los_Angeles")
@@ -86,7 +90,7 @@ def fetch_live_games():
         logging.info("📡 Fetching live games from NBA API...")
         scoreboard_data = scoreboard.ScoreBoard().get_dict()
         games = scoreboard_data.get("scoreboard", {}).get("games", [])
-
+        
         if not games:
             logging.warning("⚠️ No live games returned from API.")
             return
@@ -124,11 +128,8 @@ def fetch_live_games():
                 )
                 updated_count += 1
 
-                # Log the update to CSV
-                log_to_csv(game_data)
-
         logging.info(f"🔄 Updated {updated_count} live games.")
-
+    
     except Exception as e:
         logging.error(f"❌ Error fetching NBA live data: {e}")
 
@@ -180,13 +181,147 @@ def get_live_games():
             {"_id": 0}
         ))
 
+        if not live_games:
+            logging.warning("⚠️ No live games found in MongoDB for today.")
+
+        logging.info(f"📡 Sending {len(live_games)} live games to frontend.")
         return jsonify({"live_games": live_games})
 
     except Exception as e:
         logging.error(f"❌ Error retrieving live game data: {str(e)}")
         return jsonify({"error": f"Error retrieving data: {str(e)}"}), 500
 
+# 📺 **Live Game Boxscore API Endpoint**
+@app.route("/game-boxscore/<game_id>", methods=["GET"])
+def get_game_boxscore(game_id):
+    try:
+        # Fetch boxscore data for the game
+        boxscore_data = boxscore.BoxScore(game_id).get_dict()
+
+        # Log the entire boxscore data for debugging purposes
+        logging.info(f"Boxscore data for game {game_id}: {boxscore_data}")
+
+        # Extract home team stats and away team stats
+        home_team_stats = boxscore_data.get('game', {}).get('homeTeam', {}).get('statistics', {})
+        away_team_stats = boxscore_data.get('game', {}).get('awayTeam', {}).get('statistics', {})
+
+        # If stats are not found, log and return error
+        if not home_team_stats or not away_team_stats:
+            logging.error(f"❌ No boxscore stats found for game {game_id}")
+            return jsonify({"error": "No boxscore data found for this game."}), 404
+
+        # Extract player stats for home and away teams
+        home_team_players = boxscore_data.get('game', {}).get('homeTeam', {}).get('players', [])
+        away_team_players = boxscore_data.get('game', {}).get('awayTeam', {}).get('players', [])
+
+        # Prepare a clean response with the relevant statistics
+        game_boxscore = {
+            "gameId": game_id,
+            "homeTeam": {
+                "teamName": boxscore_data.get('game', {}).get('homeTeam', {}).get('teamName', 'Unknown'),
+                "score": home_team_stats.get('points', 0),
+                "players": [
+                    {
+                        "name": player.get("name", "Unknown"),
+                        "points": player.get("statistics", {}).get("points", 0),
+                        "assists": player.get("statistics", {}).get("assists", 0),
+                        "rebounds": player.get("statistics", {}).get("reboundsTotal", 0),
+                        "steals": player.get("statistics", {}).get("steals", 0),
+                        "blocks": player.get("statistics", {}).get("blocks", 0),
+                        "turnovers": player.get("statistics", {}).get("turnovers", 0),
+                    }
+                    for player in home_team_players
+                ]
+            },
+            "awayTeam": {
+                "teamName": boxscore_data.get('game', {}).get('awayTeam', {}).get('teamName', 'Unknown'),
+                "score": away_team_stats.get('points', 0),
+                "players": [
+                    {
+                        "name": player.get("name", "Unknown"),
+                        "points": player.get("statistics", {}).get("points", 0),
+                        "assists": player.get("statistics", {}).get("assists", 0),
+                        "rebounds": player.get("statistics", {}).get("reboundsTotal", 0),
+                        "steals": player.get("statistics", {}).get("steals", 0),
+                        "blocks": player.get("statistics", {}).get("blocks", 0),
+                        "turnovers": player.get("statistics", {}).get("turnovers", 0),
+                    }
+                    for player in away_team_players
+                ]
+            }
+        }
+
+        # Return the game boxscore data as JSON
+        return jsonify(game_boxscore)
+
+    except Exception as e:
+        logging.error(f"❌ Error fetching game boxscore: {str(e)}")
+        return jsonify({"error": f"Error retrieving game boxscore: {str(e)}"}), 500
+    
+# 📺 **Live Game Play-by-Play API Endpoint**
+@app.route("/game-playbyplay/<game_id>", methods=["GET"])
+def get_game_playbyplay(game_id):
+    try:
+        # Fetch play-by-play data for the game using nba_api
+        playbyplay_data = playbyplay.PlayByPlay(game_id).get_dict()
+
+        # Log the entire response to see what data is being returned
+        logging.info(f"Play-by-Play Data for game {game_id}: {playbyplay_data}")
+
+        # Check if the data contains valid play-by-play actions
+        if not playbyplay_data:
+            return jsonify({"error": "No data returned for this game."}), 404
+
+        if 'actions' not in playbyplay_data:
+            logging.error(f"❌ No actions found for game {game_id}")
+            return jsonify({"error": "No play-by-play actions data found for this game."}), 404
+        
+        actions = playbyplay_data.get('actions', [])
+
+        if not actions:
+            logging.error(f"❌ No actions data found for game {game_id}")
+            return jsonify({"error": "No actions found in play-by-play data."}), 404
+
+        # Extract relevant fields for each action
+        detailed_actions = []
+        for action in actions:
+            action_details = {
+                "actionNumber": action.get("actionNumber"),
+                "clock": action.get("clock"),
+                "timeActual": action.get("timeActual"),
+                "period": action.get("period"),
+                "teamTricode": action.get("teamTricode"),
+                "actionType": action.get("actionType"),
+                "subType": action.get("subType"),
+                "descriptor": action.get("descriptor"),
+                "qualifiers": action.get("qualifiers"),
+                "playerName": action.get("playerName"),
+                "shotResult": action.get("shotResult"),
+                "pointsTotal": action.get("pointsTotal"),
+                "description": action.get("description"),
+                "scoreHome": action.get("scoreHome"),
+                "scoreAway": action.get("scoreAway"),
+                "assistPlayerName": action.get("assistPlayerName"),
+                "assistPersonId": action.get("assistPersonId"),
+                "assistTotal": action.get("assistTotal"),
+            }
+            detailed_actions.append(action_details)
+
+        # Update the live game collection with the detailed actions data
+        live_games_collection.update_one(
+            {"gameId": game_id},
+            {"$set": {"actions": detailed_actions}},
+            upsert=True  # If the game doesn't exist, insert it
+        )
+
+        # Return the detailed actions data as JSON response
+        return jsonify({"play_by_play": detailed_actions})
+
+    except Exception as e:
+        logging.error(f"❌ Error fetching play-by-play data: {str(e)}")
+        return jsonify({"error": f"Error retrieving play-by-play data: {str(e)}"}), 500
+
 if __name__ == "__main__":
-    fetch_live_games()
-    threading.Thread(target=move_past_games, daemon=True).start()
+    fetch_live_games()  # Fetch initial live games data
+    threading.Thread(target=move_past_games, daemon=True).start()  # Move past games at midnight
     app.run(port=5000, debug=True)

@@ -19,33 +19,23 @@ function App() {
       try {
         const liveResponse = await fetch("http://127.0.0.1:5000/live-games");
         const pastResponse = await fetch("http://127.0.0.1:5000/past-games");
-        const upcomingResponse = await fetch("http://127.0.0.1:5000/upcoming-games");
 
         const liveData = await liveResponse.json();
         const pastData = await pastResponse.json();
-        const upcomingData = await upcomingResponse.json();
 
         console.log("🔵 Live Games Data:", liveData);
         console.log("🟢 Past Games Data:", pastData);
-        console.log("🟠 Upcoming Games Data:", upcomingData);
 
-        // Filter past and upcoming games by the selected date
         const pastGamesFiltered = pastData.past_games.filter(game =>
           game.date.startsWith(formattedDate)
         );
-        const upcomingGamesFiltered = upcomingData.upcoming_games.filter(game =>
-          game.date.startsWith(formattedDate)
-        );
 
-        // Merge live, past, and upcoming games appropriately
         let allGames = [];
         if (formattedDate === format(new Date(), "yyyy-MM-dd")) {
           allGames = [...liveData.live_games, ...pastGamesFiltered];
         } else if (selectedDate < new Date()) {
           allGames = pastGamesFiltered;
-        } else {
-          allGames = upcomingGamesFiltered;
-        }
+        } 
 
         console.log("📅 All Games for Selected Date:", allGames);
         setGames(allGames);
