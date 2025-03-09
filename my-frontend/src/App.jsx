@@ -1,16 +1,20 @@
 import React, { useState, useEffect } from "react";
 import { format, subDays, addDays } from "date-fns";
 
+// Function to get the team logo URL based on the team tricode
+const getTeamLogo = (teamId) => 
+  `https://cdn.nba.com/logos/nba/${teamId}/primary/L/logo.svg`;
+
 function App() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [games, setGames] = useState([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeTab, setActiveTab] = useState("games"); // New state for active tab
+  const [activeTab, setActiveTab] = useState("games");
 
   // Fetch games based on the selected date
   useEffect(() => {
-    if (activeTab !== "games") return; // Only fetch when viewing games
+    if (activeTab !== "games") return;
 
     const fetchGames = async () => {
       setLoading(true);
@@ -27,7 +31,7 @@ function App() {
         console.log("🟢 Past Games Data:", pastData);
 
         const pastGamesFiltered = pastData.past_games.filter(game =>
-          game.date.startsWith(formattedDate)
+          game.gameTimePST.startsWith(formattedDate)
         );
 
         let allGames = [];
@@ -56,8 +60,8 @@ function App() {
   // Filter games based on search query
   const filteredGames = games.filter(
     (game) =>
-      game.homeTeam.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      game.awayTeam.toLowerCase().includes(searchQuery.toLowerCase())
+      game.homeTeam.teamTricode.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      game.awayTeam.teamTricode.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
@@ -76,7 +80,7 @@ function App() {
 
         <input
           type="text"
-          placeholder="Search..."
+          placeholder="Search by Team Code..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
           style={searchInputStyle}
@@ -103,11 +107,35 @@ function App() {
             <div style={gameListContainer}>
               {filteredGames.map((game) => (
                 <div key={game.gameId} style={gameCardStyle}>
-                  <strong>{game.homeTeam} vs {game.awayTeam}</strong> <br />
-                  <span>{game.status}</span> <br />
-                  {game.status !== "Scheduled" && (
-                    <span>Score: {game.homeScore} - {game.awayScore}</span>
-                  )}
+                  <div style={scoreContainer}>
+                    {/* Home Team */}
+                    <div style={teamContainer}>
+                      <span>{game.homeTeam.teamTricode}</span>
+                      <img src={getTeamLogo(game.homeTeam.teamId)} alt={game.homeTeam.teamTricode} style={teamLogo} />
+                      <span style={recordStyle}>{game.homeTeam.wins} - {game.homeTeam.losses}</span>
+                    </div>
+
+                    {/* Score or Game Time */}
+                    {game.status === "Scheduled" ? (
+                      <span style={gameTimeStyle}>🕒 {game.gameTimePST}</span>
+                    ) : (
+                      <span style={scoreStyle}>{game.homeTeam.score} - {game.awayTeam.score}</span>
+                    )}
+
+                    {/* Away Team */}
+                    <div style={teamContainer}>
+                      <span>{game.awayTeam.teamTricode}</span>
+                      <img src={getTeamLogo(game.awayTeam.teamId)} alt={game.awayTeam.teamTricode} style={teamLogo} />
+                      <span style={recordStyle}>{game.awayTeam.wins} - {game.awayTeam.losses}</span>
+                    </div>
+                  </div>
+
+                  {/* Display Quarter and Game Clock (if game is ongoing) */}
+                  <span>
+                    {game.status.includes("Qtr") && !game.status.includes("End") 
+                      ? `${game.status} - ${game.gameClock}` 
+                      : game.status}
+                  </span>
                 </div>
               ))}
             </div>
@@ -123,6 +151,11 @@ function App() {
 }
 
 /* 📌 Styles */
+
+const recordStyle = { fontSize: "14px", color: "gray", marginTop: "3px" };
+
+const teamNameStyle = { fontSize: "16px", fontWeight: "bold", marginTop: "3px" };
+
 const appContainer = {
   width: "100vw",
   minHeight: "100vh",
@@ -207,22 +240,26 @@ const contentContainer = {
 };
 
 const gameListContainer = {
-  display: "flex",
-  flexWrap: "wrap",
-  justifyContent: "center",
-  gap: "20px",
-  maxWidth: "1200px",
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(400px, 1fr))",
+  gap: "30px",
+  maxWidth: "1300px",
   margin: "0 auto",
 };
 
 const gameCardStyle = {
-  padding: "15px",
-  border: "1px solid #ddd",
-  borderRadius: "10px",
+  padding: "25px",
   backgroundColor: "white",
-  width: "300px",
   textAlign: "center",
-  boxShadow: "0 4px 8px rgba(0,0,0,0.1)",
+  borderRadius: "15px",
+  boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+  minWidth: "300px",
 };
+
+const scoreContainer = { display: "flex", alignItems: "center", justifyContent: "center", gap: "70px" };
+const teamContainer = { display: "flex", flexDirection: "column", alignItems: "center", gap: "3px" };
+const teamLogo = { width: "40px", height: "40px" };
+const scoreStyle = { fontSize: "20px", fontWeight: "bold" };
+const gameTimeStyle = { fontSize: "16px", fontWeight: "bold", color: "gray" };
 
 export default App;

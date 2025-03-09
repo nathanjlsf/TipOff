@@ -1,6 +1,7 @@
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from nba_api.live.nba.endpoints import scoreboard, playbyplay, boxscore
+from nba_api.stats.endpoints import leaguegamefinder
 from pymongo import MongoClient
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
@@ -10,6 +11,7 @@ import threading
 import time
 import pytz
 import csv
+import re
 
 # Flask App
 app = Flask(__name__)
@@ -71,26 +73,47 @@ def convert_status_to_pst(status):
 
 # 🔄 **Save Game Updates to CSV**
 def log_to_csv(game_data):
-    with open(CSV_FILE, mode="a", newline="", encoding="utf-8") as file:
-        writer = csv.writer(file)
-        writer.writerow([
-            datetime.now(timezone.utc).astimezone(PST).strftime("%Y-%m-%d %H:%M:%S"),  # Timestamp in PST
-            game_data["gameId"],
-            game_data["formatted_date"],  # Date in PST
-            game_data["homeTeam"],
-            game_data["homeScore"],
-            game_data["awayTeam"],
-            game_data["awayScore"],
-            game_data["status"]  # Status in PST
-        ])
+    """
+    Logs game updates to a CSV file.
+    Ensures consistent data formatting and prevents missing fields.
+    """
+    try:
+        with open(CSV_FILE, mode="a", newline="", encoding="utf-8") as file:
+            writer = csv.writer(file)
+            writer.writerow([
+                datetime.now(timezone.utc).astimezone(PST).strftime("%Y-%m-%d %H:%M:%S"),  # Timestamp in PST
+                game_data.get("gameId", "N/A"),
+                game_data.get("gameTimePST", "Unknown"),  # Game start time in PST
+                game_data["homeTeam"].get("teamTricode", "Unknown"),
+                game_data["homeTeam"].get("score", 0),
+                game_data["awayTeam"].get("teamTricode", "Unknown"),
+                game_data["awayTeam"].get("score", 0),
+                game_data.get("status", "Unknown"),  # Game status
+                game_data.get("period", 0),  # Current period
+                game_data.get("gameClock", "00:00"),  # Game clock
+                game_data.get("arena", "Unknown"),  # Arena name
+                game_data["location"].get("city", "Unknown"),  # City of game
+                game_data["location"].get("state", "Unknown"),  # State of game
+                game_data.get("attendance", 0),  # Attendance number
+                game_data.get("playoffs", "N/A")  # Playoff series text
+            ])
+        
+        logging.info(f"📜 Logged game {game_data.get('gameId', 'N/A')} to CSV.")
+    
+    except Exception as e:
+        logging.error(f"❌ Error logging to CSV: {str(e)}")
 
 # 🏀 **Fetch Live NBA Games and Store in MongoDB**
 def fetch_live_games():
     try:
         logging.info("📡 Fetching live games from NBA API...")
-        scoreboard_data = scoreboard.ScoreBoard().get_dict()
-        games = scoreboard_data.get("scoreboard", {}).get("games", [])
         
+        # Retrieve scoreboard data as dictionary
+        scoreboard_data = scoreboard.ScoreBoard().get_dict()
+
+        # Extract list of games
+        games = scoreboard_data.get("scoreboard", {}).get("games", [])
+
         if not games:
             logging.warning("⚠️ No live games returned from API.")
             return
@@ -112,24 +135,43 @@ def fetch_live_games():
             if home_team in NBA_TEAMS and away_team in NBA_TEAMS and game_date.astimezone(PST).date() == today_pst:
                 game_data = {
                     "gameId": game_id,
-                    "date": game_date.astimezone(PST),
-                    "formatted_date": convert_to_pst(game_date_str),
-                    "homeTeam": home_team,
-                    "homeScore": game.get("homeTeam", {}).get("score", 0),
-                    "awayTeam": away_team,
-                    "awayScore": game.get("awayTeam", {}).get("score", 0),
+                    "gameTimePST": convert_to_pst(game_date_str),
+                    "period": game.get("period", 0),
+                    "gameClock": game.get("gameClock", "00:00"),
                     "status": convert_status_to_pst(game.get("gameStatusText", "Unknown")),
+                    "homeTeam": {
+                        "teamId": game.get("homeTeam", {}).get("teamId", "Unknown"),
+                        "teamName": game.get("homeTeam", {}).get("teamName", "Unknown"),
+                        "teamTricode": home_team,
+                        "score": game.get("homeTeam", {}).get("score", 0),
+                    },
+                    "awayTeam": {
+                        "teamId": game.get("awayTeam", {}).get("teamId", "Unknown"),
+                        "teamName": game.get("awayTeam", {}).get("teamName", "Unknown"),
+                        "teamTricode": away_team,
+                        "score": game.get("awayTeam", {}).get("score", 0),
+                    },
+                    "arena": game.get("arena", {}).get("name", "Unknown"),
+                    "location": {
+                        "city": game.get("arena", {}).get("city", "Unknown"),
+                        "state": game.get("arena", {}).get("stateAbbr", "Unknown"),
+                    },
+                    "attendance": game.get("attendance", 0),
+                    "playoffs": game.get("playoffs", {}).get("seriesText", "N/A"),
                 }
 
+                # Update the live games collection
                 live_games_collection.update_one(
                     {"gameId": game_id},
                     {"$set": game_data},
                     upsert=True
                 )
+
+                log_to_csv(game_data)
                 updated_count += 1
 
         logging.info(f"🔄 Updated {updated_count} live games.")
-    
+
     except Exception as e:
         logging.error(f"❌ Error fetching NBA live data: {e}")
 
@@ -164,28 +206,125 @@ def move_past_games():
 @app.route("/past-games", methods=["GET"])
 def get_past_games():
     try:
-        past_games = list(past_games_collection.find({}, {"_id": 0}))
-        return jsonify({"past_games": past_games})
+        # Get the target date from query parameters (default to yesterday)
+        target_date = request.args.get("date", (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d"))
+
+        logging.info(f"📡 Fetching past games from the current season for {target_date}...")
+
+        # Fetch all past games for the current season
+        games_data = leaguegamefinder.LeagueGameFinder(season_nullable="2023-24", season_type_nullable="Regular Season").get_dict()
+        games = games_data['resultSets'][0]['rowSet']
+
+        if not games:
+            logging.warning(f"⚠️ No past games found for {target_date}.")
+            return jsonify({"past_games": []})  # Return an empty list instead of an error
+
+        past_games_data = []
+
+        for game in games:
+            game_date_str = game[4]  # Date format is YYYY-MM-DD
+            if game_date_str != target_date:
+                continue  # Skip games not from the requested date
+
+            past_game = {
+                "gameId": game[2],
+                "gameTimePST": convert_to_pst(game_date_str),
+                "homeTeam": {
+                    "teamTricode": game[6],  # Home team abbreviation
+                    "score": game[22],  # Home team score
+                },
+                "awayTeam": {
+                    "teamTricode": game[7],  # Away team abbreviation
+                    "score": game[23],  # Away team score
+                },
+                "status": "Final",
+                "arena": "Unknown",  # LeagueGameFinder does not provide arena data
+                "location": {
+                    "city": "Unknown",
+                    "state": "Unknown",
+                },
+                "playoffs": "N/A",
+            }
+
+            past_games_data.append(past_game)
+
+        logging.info(f"📡 Sending {len(past_games_data)} past games to frontend.")
+        return jsonify({"past_games": past_games_data})
 
     except Exception as e:
         logging.error(f"❌ Error retrieving past game data: {str(e)}")
         return jsonify({"error": f"Error retrieving data: {str(e)}"}), 500
 
-# 📺 **Live Games API Endpoint**
+# Helper function to convert "PT00M57.10S" to "00:57"
+def format_game_clock(game_clock):
+    if not game_clock or not game_clock.startswith("PT"):
+        return "00:00"  # Default if invalid format
+
+    # Extract minutes and seconds using regex
+    match = re.search(r"PT(\d+)M([\d.]+)S", game_clock)
+    if match:
+        minutes, seconds = match.groups()
+        return f"{int(minutes):02}:{int(float(seconds)):02}"  # Convert to MM:SS format
+    return "00:00"  # Default if format is unexpected
+
 @app.route("/live-games", methods=["GET"])
 def get_live_games():
     try:
-        today_pst = get_today_pst()
-        live_games = list(live_games_collection.find(
-            {"date": {"$gte": datetime.combine(today_pst, datetime.min.time(), PST)}},
-            {"_id": 0}
-        ))
+        logging.info("📡 Fetching live games from NBA API...")
 
-        if not live_games:
-            logging.warning("⚠️ No live games found in MongoDB for today.")
+        # Retrieve live game data from the NBA API
+        scoreboard_data = scoreboard.ScoreBoard().get_dict()
+        games = scoreboard_data.get("scoreboard", {}).get("games", [])
 
-        logging.info(f"📡 Sending {len(live_games)} live games to frontend.")
-        return jsonify({"live_games": live_games})
+        if not games:
+            logging.warning("⚠️ No live games found.")
+            return jsonify({"live_games": []})  # Return an empty list instead of an error
+
+        live_games_data = []
+
+        for game in games:
+            game_id = game.get("gameId", "N/A")
+            game_date_str = game.get("gameTimeUTC", "N/A")
+            game_date = datetime.strptime(game_date_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc) if game_date_str != "N/A" else None
+
+            home_team = game.get("homeTeam", {})
+            away_team = game.get("awayTeam", {})
+
+            live_game = {
+                "gameId": game_id,
+                "gameTimePST": convert_to_pst(game_date_str),
+                "period": game.get("period", 0),
+                "gameClock": format_game_clock(game.get("gameClock", "00:00")),  # Fix game clock
+                "status": convert_status_to_pst(game.get("gameStatusText", "Unknown")),
+                "homeTeam": {
+                    "teamId": home_team.get("teamId", "Unknown"),
+                    "teamName": home_team.get("teamName", "Unknown"),
+                    "teamTricode": home_team.get("teamTricode", "Unknown"),
+                    "score": home_team.get("score", 0),
+                    "wins": home_team.get("wins", 0),  # Added wins
+                    "losses": home_team.get("losses", 0),  # Added losses
+                },
+                "awayTeam": {
+                    "teamId": away_team.get("teamId", "Unknown"),
+                    "teamName": away_team.get("teamName", "Unknown"),
+                    "teamTricode": away_team.get("teamTricode", "Unknown"),
+                    "score": away_team.get("score", 0),
+                    "wins": away_team.get("wins", 0),  # Added wins
+                    "losses": away_team.get("losses", 0),  # Added losses
+                },
+                "arena": game.get("arena", {}).get("name", "Unknown"),
+                "location": {
+                    "city": game.get("arena", {}).get("city", "Unknown"),
+                    "state": game.get("arena", {}).get("stateAbbr", "Unknown"),
+                },
+                "attendance": game.get("attendance", 0),
+                "playoffs": game.get("playoffs", {}).get("seriesText", "N/A"),
+            }
+
+            live_games_data.append(live_game)
+
+        logging.info(f"📡 Sending {len(live_games_data)} live games to frontend.")
+        return jsonify({"live_games": live_games_data})
 
     except Exception as e:
         logging.error(f"❌ Error retrieving live game data: {str(e)}")
