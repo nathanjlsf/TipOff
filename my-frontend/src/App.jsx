@@ -1,21 +1,26 @@
 import React, { useState, useEffect } from "react";
 import { format, subDays, addDays } from "date-fns";
+import { BrowserRouter as Router, Route, Routes, useNavigate } from "react-router-dom";
+import GameDetails from "./gameDetails"; // Import GameDetails page
+import Teams from "./Teams";
+import Standings from "./Standings";
+import StatLeaders from "./StatLeaders";
+import Navbar from "./Navbar";
+
 
 // Function to get the team logo URL based on the team tricode
 const getTeamLogo = (teamId) => 
   `https://cdn.nba.com/logos/nba/${teamId}/primary/L/logo.svg`;
 
-function App() {
+function Home() {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [games, setGames] = useState([]);
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [activeTab, setActiveTab] = useState("games");
+  const navigate = useNavigate();
 
   // Fetch games based on the selected date
   useEffect(() => {
-    if (activeTab !== "games") return;
-
     const fetchGames = async () => {
       setLoading(true);
       const formattedDate = format(selectedDate, "yyyy-MM-dd");
@@ -39,23 +44,41 @@ function App() {
           allGames = [...liveData.live_games, ...pastGamesFiltered];
         } else if (selectedDate < new Date()) {
           allGames = pastGamesFiltered;
-        } 
+        }
 
         console.log("📅 All Games for Selected Date:", allGames);
         setGames(allGames);
+
+        sessionStorage.setItem("games", JSON.stringify(allGames));
+
       } catch (error) {
         console.error("❌ Error fetching games:", error);
       }
       setLoading(false);
     };
 
-    fetchGames();
-  }, [selectedDate, activeTab]);
+    const savedGames = sessionStorage.getItem("games");
+    if (savedGames) {
+      setGames(JSON.parse(savedGames))
+    }
+    else {
+      fetchGames();
+    }
+
+    const interval = setInterval(fetchGames, 35000);
+
+    return () => clearInterval(interval);
+  }, [selectedDate]);
 
   // Change date handlers
   const prevDay = () => setSelectedDate(subDays(selectedDate, 1));
   const nextDay = () => setSelectedDate(addDays(selectedDate, 1));
   const resetToToday = () => setSelectedDate(new Date());
+
+  // Navigate to game details page
+  const handleGameClick = (game) => {
+    navigate(`/game/${game.gameId}`, { state: { game } });
+  };
 
   // Filter games based on search query
   const filteredGames = games.filter(
@@ -66,85 +89,53 @@ function App() {
 
   return (
     <div style={appContainer}>
-      {/* 🔹 Navbar */}
-      <nav style={navbarStyle}>
-        <h2 onClick={resetToToday} style={logoStyle}>🏀 TipOff</h2>
+      <h2 onClick={resetToToday} style={logoStyle}>🏀 TipOff</h2>
 
-        {/* Navigation Tabs */}
-        <div style={navLinksStyle}>
-          <button onClick={() => setActiveTab("games")} style={activeTab === "games" ? activeTabStyle : tabStyle}>Games</button>
-          <button onClick={() => setActiveTab("teams")} style={activeTab === "teams" ? activeTabStyle : tabStyle}>Teams</button>
-          <button onClick={() => setActiveTab("standings")} style={activeTab === "standings" ? activeTabStyle : tabStyle}>Team Standings</button>
-          <button onClick={() => setActiveTab("stats")} style={activeTab === "stats" ? activeTabStyle : tabStyle}>Player Stat Leaders</button>
-        </div>
+      <div style={dateNavStyle}>
+        <button onClick={prevDay} style={buttonStyle}>◀ Previous</button>
+        <span style={dateTextStyle}>{format(selectedDate, "EEEE, MMM d, yyyy")}</span>
+        <button onClick={nextDay} style={buttonStyle}>Next ▶</button>
+      </div>
 
-        <input
-          type="text"
-          placeholder="Search by Team Code..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          style={searchInputStyle}
-        />
-      </nav>
+      {/* Game List */}
+      <div style={gameListContainer}>
+        {filteredGames.map((game) => (
+          <button 
+            key={game.gameId} 
+            style={gameCardStyle}
+            onClick={() => handleGameClick(game)}
+          >
+            <div style={scoreContainer}>
+              {/* Home Team */}
+              <div style={teamContainer}>
+                <span style={teamNameStyle}>{game.homeTeam.teamTricode}</span>
+                <img src={getTeamLogo(game.homeTeam.teamId)} alt={game.homeTeam.teamTricode} style={teamLogo} />
+                <span style={recordStyle}>{game.homeTeam.wins} - {game.homeTeam.losses}</span>
+              </div>
 
-      {/* 📅 Date Navigation (Only for Games Tab) */}
-      {activeTab === "games" && (
-        <div style={dateNavStyle}>
-          <button onClick={prevDay} style={buttonStyle}>◀ Previous</button>
-          <span style={dateTextStyle}>{format(selectedDate, "EEEE, MMM d, yyyy")}</span>
-          <button onClick={nextDay} style={buttonStyle}>Next ▶</button>
-        </div>
-      )}
+              {/* Score */}
+              <span style={scoreStyle}>{game.homeTeam.score} - {game.awayTeam.score}</span>
 
-      {/* 🏀 Content Based on Active Tab */}
-      <div style={contentContainer}>
-        {activeTab === "games" && (
-          loading ? (
-            <p>Loading games...</p>
-          ) : filteredGames.length === 0 ? (
-            <p>No games found for this date.</p>
-          ) : (
-            <div style={gameListContainer}>
-              {filteredGames.map((game) => (
-                <div key={game.gameId} style={gameCardStyle}>
-                  <div style={scoreContainer}>
-                    {/* Home Team */}
-                    <div style={teamContainer}>
-                      <span>{game.homeTeam.teamTricode}</span>
-                      <img src={getTeamLogo(game.homeTeam.teamId)} alt={game.homeTeam.teamTricode} style={teamLogo} />
-                      <span style={recordStyle}>{game.homeTeam.wins} - {game.homeTeam.losses}</span>
-                    </div>
-
-                    {/* Score or Game Time */}
-                    {game.status === "Scheduled" ? (
-                      <span style={gameTimeStyle}>🕒 {game.gameTimePST}</span>
-                    ) : (
-                      <span style={scoreStyle}>{game.homeTeam.score} - {game.awayTeam.score}</span>
-                    )}
-
-                    {/* Away Team */}
-                    <div style={teamContainer}>
-                      <span>{game.awayTeam.teamTricode}</span>
-                      <img src={getTeamLogo(game.awayTeam.teamId)} alt={game.awayTeam.teamTricode} style={teamLogo} />
-                      <span style={recordStyle}>{game.awayTeam.wins} - {game.awayTeam.losses}</span>
-                    </div>
-                  </div>
-
-                  {/* Display Quarter and Game Clock (if game is ongoing) */}
-                  <span>
-                    {game.status.includes("Qtr") && !game.status.includes("End") 
-                      ? `${game.status} - ${game.gameClock}` 
-                      : game.status}
-                  </span>
-                </div>
-              ))}
+              {/* Away Team */}
+              <div style={teamContainer}>
+                <span style={teamNameStyle}>{game.awayTeam.teamTricode}</span>
+                <img src={getTeamLogo(game.awayTeam.teamId)} alt={game.awayTeam.teamTricode} style={teamLogo} />
+                <span style={recordStyle}>{game.awayTeam.wins} - {game.awayTeam.losses}</span>
+              </div>
             </div>
-          )
-        )}
 
-        {activeTab === "teams" && <h2>🏀 List of NBA Teams (Coming Soon!)</h2>}
-        {activeTab === "standings" && <h2>📊 Team Standings (Coming Soon!)</h2>}
-        {activeTab === "stats" && <h2>📈 Player Stat Leaders (Coming Soon!)</h2>}
+            {/* Quarter & Game Clock */}
+            {game.status.includes("Qtr") && !game.status.includes("End") ? (
+              <div style={gameStatusStyle}>
+                <span>⏳ {game.status} - {game.gameClock}</span>
+              </div>
+            ) : (
+              <div style={gameStatusStyle}>
+                <span>{game.status}</span>
+              </div>
+            )}
+          </button>
+        ))}
       </div>
     </div>
   );
@@ -256,10 +247,30 @@ const gameCardStyle = {
   minWidth: "300px",
 };
 
+const gameStatusStyle = {
+  fontSize: "16px",
+  fontWeight: "bold",
+  marginTop: "10px",
+  color: "#d32f2f",
+};
+
 const scoreContainer = { display: "flex", alignItems: "center", justifyContent: "center", gap: "70px" };
 const teamContainer = { display: "flex", flexDirection: "column", alignItems: "center", gap: "3px" };
 const teamLogo = { width: "40px", height: "40px" };
 const scoreStyle = { fontSize: "20px", fontWeight: "bold" };
 const gameTimeStyle = { fontSize: "16px", fontWeight: "bold", color: "gray" };
 
-export default App;
+export default function App() {
+  return (
+    <Router>
+      <Navbar /> {/* Status Bar Always on Top */}
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/game/:gameId" element={<GameDetails />} />
+        <Route path="/teams" element={<Teams />} />
+        <Route path="/standings" element={<Standings />} />
+        <Route path="/stat-leaders" element={<StatLeaders />} />
+      </Routes>
+    </Router>
+  );
+}
