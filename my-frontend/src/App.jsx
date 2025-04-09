@@ -19,56 +19,57 @@ function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const navigate = useNavigate();
 
+  const fetchGames = async () => {
+    setLoading(true);
+    const formattedDate = format(selectedDate, "yyyy-MM-dd");
+
+    try {
+      const liveResponse = await fetch("http://127.0.0.1:5000/live-games");
+      const pastResponse = await fetch("http://127.0.0.1:5000/past-games");
+
+      const liveData = await liveResponse.json();
+      const pastData = await pastResponse.json();
+
+      console.log("🔵 Live Games Data:", liveData);
+      console.log("🟢 Past Games Data:", pastData);
+
+      const pastGamesFiltered = pastData.past_games.filter(game =>
+        game.gameTimePST.startsWith(formattedDate)
+      );
+
+      let allGames = [];
+      if (formattedDate === format(new Date(), "yyyy-MM-dd")) {
+        allGames = [...liveData.live_games, ...pastGamesFiltered];
+      } else if (selectedDate < new Date()) {
+        allGames = pastGamesFiltered;
+      }
+
+      console.log("📅 All Games for Selected Date:", allGames);
+      setGames(allGames);
+
+      sessionStorage.setItem("games", JSON.stringify(allGames));
+
+    } catch (error) {
+      console.error("❌ Error fetching games:", error);
+    }
+    setLoading(false);
+  };
+
   // Fetch games based on the selected date
   useEffect(() => {
-    const fetchGames = async () => {
-      setLoading(true);
-      const formattedDate = format(selectedDate, "yyyy-MM-dd");
-
-      try {
-        const liveResponse = await fetch("http://127.0.0.1:5000/live-games");
-        const pastResponse = await fetch("http://127.0.0.1:5000/past-games");
-
-        const liveData = await liveResponse.json();
-        const pastData = await pastResponse.json();
-
-        console.log("🔵 Live Games Data:", liveData);
-        console.log("🟢 Past Games Data:", pastData);
-
-        const pastGamesFiltered = pastData.past_games.filter(game =>
-          game.gameTimePST.startsWith(formattedDate)
-        );
-
-        let allGames = [];
-        if (formattedDate === format(new Date(), "yyyy-MM-dd")) {
-          allGames = [...liveData.live_games, ...pastGamesFiltered];
-        } else if (selectedDate < new Date()) {
-          allGames = pastGamesFiltered;
-        }
-
-        console.log("📅 All Games for Selected Date:", allGames);
-        setGames(allGames);
-
-        sessionStorage.setItem("games", JSON.stringify(allGames));
-
-      } catch (error) {
-        console.error("❌ Error fetching games:", error);
-      }
-      setLoading(false);
-    };
-
     const savedGames = sessionStorage.getItem("games");
     if (savedGames) {
-      setGames(JSON.parse(savedGames))
+      setGames(JSON.parse(savedGames));
+    } else {
+      fetchGames(); // ✅ No param
     }
-    else {
-      fetchGames();
-    }
-
-    const interval = setInterval(fetchGames, 35000);
-
+  
+    const interval = setInterval(() => {
+      fetchGames(); // ✅ No param
+    }, 35000);
+  
     return () => clearInterval(interval);
-  }, [selectedDate]);
+  }, [selectedDate]);  
 
   // Change date handlers
   const prevDay = () => setSelectedDate(subDays(selectedDate, 1));
@@ -245,6 +246,11 @@ const gameCardStyle = {
   borderRadius: "15px",
   boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
   minWidth: "300px",
+  transition: "transform 0.2s ease",
+  cursor: "pointer",
+  ":hover": {
+    transform: "scale(1.03)",
+  }
 };
 
 const gameStatusStyle = {

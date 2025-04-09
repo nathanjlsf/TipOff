@@ -1,7 +1,7 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from nba_api.live.nba.endpoints import scoreboard, playbyplay, boxscore
-from nba_api.stats.endpoints import leaguegamefinder
+from nba_api.stats.endpoints import leaguegamefinder, alltimeleadersgrids, playercareerstats
 from pymongo import MongoClient
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
@@ -416,34 +416,78 @@ def get_game_boxscore(game_id):
         logging.error(f"❌ Error fetching game boxscore: {str(e)}")
         return jsonify({"error": f"Error retrieving game boxscore: {str(e)}"}), 500
     
+@app.route("/all-time-leaders", methods=["GET"])
+def get_all_time_leaders():
+    try:
+        data = alltimeleadersgrids.AllTimeLeadersGrids().get_dict()
+
+        categories = data["resultSets"]
+        all_leaders = {}
+
+        for category in categories:
+            category_name = category["name"]
+            leaders = [
+                {
+                    "player": row[1],
+                    "team": row[2],
+                    "statValue": row[3]
+                } for row in category["rowSet"][:10]  # Top 10
+            ]
+            all_leaders[category_name] = leaders
+
+        return jsonify(all_leaders)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/player-career-stats/<int:player_id>", methods=["GET"])
+def get_player_career_stats(player_id):
+    try:
+        data = playercareerstats.PlayerCareerStats(player_id=player_id).get_dict()
+
+        career = data["resultSets"][0]  # Regular Season Totals
+        career_stats = [
+            {
+                "season": row[1],
+                "team_id": row[3],
+                "team_abbreviation": row[4],
+                "games_played": row[6],
+                "points": row[26],
+                "assists": row[21],
+                "rebounds": row[20],
+                "steals": row[22],
+                "blocks": row[23],
+                "fg_pct": row[9],
+                "three_pct": row[12],
+                "ft_pct": row[15],
+                "turnovers": row[24],
+                "minutes": row[7]
+            } for row in career["rowSet"]
+        ]
+
+        return jsonify({"player_id": player_id, "career_stats": career_stats})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
 # 📺 **Live Game Play-by-Play API Endpoint**
 @app.route("/game-playbyplay/<game_id>", methods=["GET"])
 def get_game_playbyplay(game_id):
     try:
-        # Fetch play-by-play data for the game using nba_api
+        # Fetch play-by-play data
         playbyplay_data = playbyplay.PlayByPlay(game_id).get_dict()
 
-        # Log the entire response to see what data is being returned
-        logging.info(f"Play-by-Play Data for game {game_id}: {playbyplay_data}")
+        logging.info(f"📺 Play-by-Play Data for game {game_id} received.")
 
-        # Check if the data contains valid play-by-play actions
-        if not playbyplay_data:
-            return jsonify({"error": "No data returned for this game."}), 404
-
-        if 'actions' not in playbyplay_data:
-            logging.error(f"❌ No actions found for game {game_id}")
-            return jsonify({"error": "No play-by-play actions data found for this game."}), 404
-        
-        actions = playbyplay_data.get('actions', [])
+        # Safely get the actions list
+        actions = playbyplay_data.get('game', {}).get('actions', [])
 
         if not actions:
-            logging.error(f"❌ No actions data found for game {game_id}")
-            return jsonify({"error": "No actions found in play-by-play data."}), 404
+            logging.warning(f"⚠️ No play-by-play actions found for game {game_id}")
+            return jsonify({"error": "No play-by-play actions data found for this game."}), 404
 
-        # Extract relevant fields for each action
+        # Extract relevant fields
         detailed_actions = []
         for action in actions:
-            action_details = {
+            detailed_actions.append({
                 "actionNumber": action.get("actionNumber"),
                 "clock": action.get("clock"),
                 "timeActual": action.get("timeActual"),
@@ -462,17 +506,15 @@ def get_game_playbyplay(game_id):
                 "assistPlayerName": action.get("assistPlayerName"),
                 "assistPersonId": action.get("assistPersonId"),
                 "assistTotal": action.get("assistTotal"),
-            }
-            detailed_actions.append(action_details)
+            })
 
-        # Update the live game collection with the detailed actions data
+        # Store in MongoDB (optional)
         live_games_collection.update_one(
             {"gameId": game_id},
             {"$set": {"actions": detailed_actions}},
-            upsert=True  # If the game doesn't exist, insert it
+            upsert=True
         )
 
-        # Return the detailed actions data as JSON response
         return jsonify({"play_by_play": detailed_actions})
 
     except Exception as e:
