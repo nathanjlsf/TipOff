@@ -18,31 +18,38 @@ export default function Navbar() {
 /* 📌 Styles */
 const navbarStyle = {
   display: "flex",
-  justifyContent: "space-between",
+  flexDirection: "column",
   alignItems: "center",
+  justifyContent: "center",
   backgroundColor: "#333",
   padding: "15px 20px",
   color: "white",
   position: "sticky",
   top: "0",
+  zIndex: "100",
   width: "100%",
-  zIndex: "1000",
+  boxSizing: "border-box",
 };
 
 const logoStyle = {
-  cursor: "pointer",
-  margin: "0",
+  marginBottom: "10px",
   fontSize: "24px",
+};
+
+const navLinksContainer = {
+  display: "flex",
+  justifyContent: "center",
+  width: "100%",
 };
 
 const navLinksStyle = {
   display: "flex",
-  gap: "15px",
+  gap: "25px",
 };
 
 const navLinkStyle = {
-  textDecoration: "none",
   color: "white",
-  fontSize: "18px",
+  textDecoration: "none",
+  fontSize: "16px",
   fontWeight: "bold",
 };

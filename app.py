@@ -1,7 +1,7 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from nba_api.live.nba.endpoints import scoreboard, playbyplay, boxscore
-from nba_api.stats.endpoints import leaguegamefinder, alltimeleadersgrids, playercareerstats
+from nba_api.stats.endpoints import leaguegamefinder, alltimeleadersgrids, playercareerstats, leagueleaders
 from pymongo import MongoClient
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
@@ -336,80 +336,106 @@ def get_game_boxscore(game_id):
     try:
         # Fetch boxscore data for the game
         boxscore_data = boxscore.BoxScore(game_id).get_dict()
-
-        # Log the entire boxscore data for debugging purposes
         logging.info(f"Boxscore data for game {game_id}: {boxscore_data}")
 
-        # Extract home team stats and away team stats
-        home_team_stats = boxscore_data.get('game', {}).get('homeTeam', {}).get('statistics', {})
-        away_team_stats = boxscore_data.get('game', {}).get('awayTeam', {}).get('statistics', {})
+        game_data = boxscore_data.get("game", {})
 
-        # If stats are not found, log and return error
+        # Get statistics for teams
+        home_team_data = game_data.get('homeTeam', {})
+        away_team_data = game_data.get('awayTeam', {})
+
+        home_team_stats = home_team_data.get('statistics', {})
+        away_team_stats = away_team_data.get('statistics', {})
+
         if not home_team_stats or not away_team_stats:
-            logging.error(f"❌ No boxscore stats found for game {game_id}")
             return jsonify({"error": "No boxscore data found for this game."}), 404
 
-        # Extract player stats for home and away teams
-        home_team_players = boxscore_data.get('game', {}).get('homeTeam', {}).get('players', [])
-        away_team_players = boxscore_data.get('game', {}).get('awayTeam', {}).get('players', [])
+        # Function to extract quarter scores
+        def get_period_scores(team):
+            quarters = {"Q1": 0, "Q2": 0, "Q3": 0, "Q4": 0, "OT": 0}
+            for period in team.get("periods", []):
+                num = period.get("period", 0)
+                score = period.get("score", 0)
+                if 1 <= num <= 4:
+                    quarters[f"Q{num}"] = score
+                else:
+                    quarters["OT"] += score
+            return quarters
 
-        # Prepare a clean response with the relevant statistics
+        # Create summary stats and quarter scores
+        home_summary = {
+            "points": home_team_stats.get("points", 0),
+            "fieldGoalsMade": home_team_stats.get("fieldGoalsMade", 0),
+            "fieldGoalsAttempted": home_team_stats.get("fieldGoalsAttempted", 0),
+            "threePointersMade": home_team_stats.get("threePointersMade", 0),
+            "threePointersAttempted": home_team_stats.get("threePointersAttempted", 0),
+            "freeThrowsMade": home_team_stats.get("freeThrowsMade", 0),
+            "freeThrowsAttempted": home_team_stats.get("freeThrowsAttempted", 0),
+            "rebounds": home_team_stats.get("reboundsTotal", 0),
+            "assists": home_team_stats.get("assists", 0),
+            "steals": home_team_stats.get("steals", 0),
+            "blocks": home_team_stats.get("blocks", 0),
+            "turnovers": home_team_stats.get("turnovers", 0),
+            "quarters": get_period_scores(home_team_data)
+        }
+
+        away_summary = {
+            "points": away_team_stats.get("points", 0),
+            "fieldGoalsMade": away_team_stats.get("fieldGoalsMade", 0),
+            "fieldGoalsAttempted": away_team_stats.get("fieldGoalsAttempted", 0),
+            "threePointersMade": away_team_stats.get("threePointersMade", 0),
+            "threePointersAttempted": away_team_stats.get("threePointersAttempted", 0),
+            "freeThrowsMade": away_team_stats.get("freeThrowsMade", 0),
+            "freeThrowsAttempted": away_team_stats.get("freeThrowsAttempted", 0),
+            "rebounds": away_team_stats.get("reboundsTotal", 0),
+            "assists": away_team_stats.get("assists", 0),
+            "steals": away_team_stats.get("steals", 0),
+            "blocks": away_team_stats.get("blocks", 0),
+            "turnovers": away_team_stats.get("turnovers", 0),
+            "quarters": get_period_scores(away_team_data)
+        }
+
+        # Extract player stats
+        def extract_players(players):
+            return [
+                {
+                    "name": p.get("name", "Unknown"),
+                    "points": p.get("statistics", {}).get("points", 0),
+                    "assists": p.get("statistics", {}).get("assists", 0),
+                    "rebounds": p.get("statistics", {}).get("reboundsTotal", 0),
+                    "fieldGoalsAttempted": p.get("statistics", {}).get("fieldGoalsAttempted", 0),
+                    "fieldGoalsMade": p.get("statistics", {}).get("fieldGoalsMade", 0),
+                    "fieldGoalsPercentage": p.get("statistics", {}).get("fieldGoalsPercentage", 0),
+                    "threePointersAttempted": p.get("statistics", {}).get("threePointersAttempted", 0),
+                    "threePointersMade": p.get("statistics", {}).get("threePointersMade", 0),
+                    "threePointersPercentage": p.get("statistics", {}).get("threePointersPercentage", 0),
+                    "freeThrowsAttempted": p.get("statistics", {}).get("freeThrowsAttempted", 0),
+                    "freeThrowsMade": p.get("statistics", {}).get("freeThrowsMade", 0),
+                    "freeThrowsPercentage": p.get("statistics", {}).get("freeThrowsPercentage", 0),
+                    "steals": p.get("statistics", {}).get("steals", 0),
+                    "blocks": p.get("statistics", {}).get("blocks", 0),
+                    "turnovers": p.get("statistics", {}).get("turnovers", 0),
+                    "starter": p.get("starter", 0),
+                }
+                for p in players
+            ]
+
         game_boxscore = {
             "gameId": game_id,
             "homeTeam": {
-                "teamName": boxscore_data.get('game', {}).get('homeTeam', {}).get('teamName', 'Unknown'),
-                "score": home_team_stats.get('points', 0),
-                "players": [
-                    {
-                        "name": player.get("name", "Unknown"),
-                        "points": player.get("statistics", {}).get("points", 0),
-                        "assists": player.get("statistics", {}).get("assists", 0),
-                        "rebounds": player.get("statistics", {}).get("reboundsTotal", 0),
-                        "fieldGoalsAttempted": player.get("statistics", {}).get("fieldGoalsAttempted", 0),
-                        "fieldGoalsMade": player.get("statistics", {}).get("fieldGoalsMade", 0),
-                        "fieldGoalsPercentage": player.get("statistics", {}).get("fieldGoalsPercentage", 0),
-                        "threePointersAttempted": player.get("statistics", {}).get("threePointersAttempted", 0),
-                        "threePointersMade": player.get("statistics", {}).get("threePointersMade", 0),
-                        "threePointersPercentage": player.get("statistics", {}).get("threePointersPercentage", 0),
-                        "freeThrowsAttempted": player.get("statistics", {}).get("freeThrowsAttempted", 0),
-                        "freeThrowsMade": player.get("statistics", {}).get("freeThrowsMade", 0),
-                        "freeThrowsPercentage": player.get("statistics", {}).get("freeThrowsPercentage", 0),
-                        "steals": player.get("statistics", {}).get("steals", 0),
-                        "blocks": player.get("statistics", {}).get("blocks", 0),
-                        "turnovers": player.get("statistics", {}).get("turnovers", 0),
-
-                    }
-                    for player in home_team_players
-                ]
+                "teamName": home_team_data.get("teamName", "Unknown"),
+                "score": home_team_stats.get("points", 0),
+                "summary": home_summary,
+                "players": extract_players(home_team_data.get("players", []))
             },
             "awayTeam": {
-                "teamName": boxscore_data.get('game', {}).get('awayTeam', {}).get('teamName', 'Unknown'),
-                "score": away_team_stats.get('points', 0),
-                "players": [
-                    {
-                        "name": player.get("name", "Unknown"),
-                        "points": player.get("statistics", {}).get("points", 0),
-                        "assists": player.get("statistics", {}).get("assists", 0),
-                        "rebounds": player.get("statistics", {}).get("reboundsTotal", 0),
-                        "fieldGoalsAttempted": player.get("statistics", {}).get("fieldGoalsAttempted", 0),
-                        "fieldGoalsMade": player.get("statistics", {}).get("fieldGoalsMade", 0),
-                        "fieldGoalsPercentage": player.get("statistics", {}).get("fieldGoalsPercentage", 0),
-                        "threePointersAttempted": player.get("statistics", {}).get("threePointersAttempted", 0),
-                        "threePointersMade": player.get("statistics", {}).get("threePointersMade", 0),
-                        "threePointersPercentage": player.get("statistics", {}).get("threePointersPercentage", 0),
-                        "freeThrowsAttempted": player.get("statistics", {}).get("freeThrowsAttempted", 0),
-                        "freeThrowsMade": player.get("statistics", {}).get("freeThrowsMade", 0),
-                        "freeThrowsPercentage": player.get("statistics", {}).get("freeThrowsPercentage", 0),
-                        "steals": player.get("statistics", {}).get("steals", 0),
-                        "blocks": player.get("statistics", {}).get("blocks", 0),
-                        "turnovers": player.get("statistics", {}).get("turnovers", 0),
-                    }
-                    for player in away_team_players
-                ]
+                "teamName": away_team_data.get("teamName", "Unknown"),
+                "score": away_team_stats.get("points", 0),
+                "summary": away_summary,
+                "players": extract_players(away_team_data.get("players", []))
             }
         }
 
-        # Return the game boxscore data as JSON
         return jsonify(game_boxscore)
 
     except Exception as e:
@@ -436,6 +462,53 @@ def get_all_time_leaders():
             all_leaders[category_name] = leaders
 
         return jsonify(all_leaders)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/all-time-playoff-leaders", methods=["GET"])
+def get_all_time_playoff_leaders():
+    try:
+        data = alltimeleadersgrids.AllTimeLeadersGrids(season_type="Playoffs").get_dict()
+
+        categories = data["resultSets"]
+        all_leaders = {}
+
+        for category in categories:
+            category_name = category["name"]
+            leaders = [
+                {
+                    "player": row[1],
+                    "team": row[2],
+                    "statValue": row[3]
+                } for row in category["rowSet"][:10]  # Top 10
+            ]
+            all_leaders[category_name] = leaders
+
+        return jsonify(all_leaders)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/current-season-leaders", methods=["GET"])
+def get_current_season_leaders():
+    try:
+        # You can dynamically get the season if you want, here hardcoded for now
+        season = request.args.get("season", "2024-25")  # Default to 2024-25
+        season_type = request.args.get("season_type", "Regular Season")  # Or "Playoffs"
+
+        data = leagueleaders.LeagueLeaders(
+            season=season,
+            season_type_all_star=season_type
+        ).get_dict()
+
+        leaders_data = data["resultSet"]["rowSet"]
+        headers = data["resultSet"]["headers"]
+
+        leaders = [
+            dict(zip(headers, row))
+            for row in leaders_data
+        ]
+
+        return jsonify(leaders)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
