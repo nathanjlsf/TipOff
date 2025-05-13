@@ -6,6 +6,7 @@ import Teams from "./Teams";
 import Standings from "./Standings";
 import StatLeaders from "./StatLeaders";
 import Navbar from "./Navbar";
+import Playoffs from "./Playoffs";
 
 
 // Function to get the team logo URL based on the team tricode
@@ -276,6 +277,7 @@ export default function App() {
         <Route path="/teams" element={<Teams />} />
         <Route path="/standings" element={<Standings />} />
         <Route path="/stat-leaders" element={<StatLeaders />} />
+        <Route path="/playoffs" element={<Playoffs />} />
       </Routes>
     </Router>
   );

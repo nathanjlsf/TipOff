@@ -10,6 +10,7 @@ export default function Navbar() {
         <Link to="/teams" style={navLinkStyle}>Teams</Link>
         <Link to="/standings" style={navLinkStyle}>Team Standings</Link>
         <Link to="/stat-leaders" style={navLinkStyle}>Stat Leaders</Link>
+        <Link to="/playoffs" style={navLinkStyle}>Playoffs</Link>
       </div>
     </nav>
   );

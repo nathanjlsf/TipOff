@@ -1,17 +1,11 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from nba_api.live.nba.endpoints import scoreboard, playbyplay, boxscore
+from nba_api.live.nba.endpoints import scoreboard, playbyplay, boxscore, leaguestandings
 from nba_api.stats.endpoints import leaguegamefinder, alltimeleadersgrids, playercareerstats, leagueleaders
 from pymongo import MongoClient
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
-import os
-import logging
-import threading
-import time
-import pytz
-import csv
-import re
+import os, logging, threading, time, pytz, csv, re, requests
 
 # Flask App
 app = Flask(__name__)
@@ -538,6 +532,28 @@ def get_player_career_stats(player_id):
         ]
 
         return jsonify({"player_id": player_id, "career_stats": career_stats})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+@app.route("/standings", methods=["GET"])
+def get_standings():
+    try:
+        standings = leaguestandings.LeagueStandings(season="2024-25", season_type="Regular Season")
+        data = standings.get_data_frames()[0]
+
+        # Convert DataFrame to JSON-serializable list
+        standings_list = data.to_dict(orient="records")
+
+        return jsonify(standings_list)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+@app.route("/playoff-bracket", methods=["GET"])
+def get_playoff_bracket():
+    try:
+        response = requests.get("https://cdn.nba.com/static/json/staticData/playoffBracket.json")
+        data = response.json()
+        return jsonify(data)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     
