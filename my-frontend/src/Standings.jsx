@@ -39,12 +39,12 @@ export default function Standings() {
         <tbody>
           {teams.sort((a, b) => a.ConferenceRank - b.ConferenceRank).map((team, idx) => (
             <tr key={team.TeamID}>
-              <td>{team.ConferenceRank}</td>
+              <td>{team.PlayoffRank}</td>
               <td>{team.TeamName}</td>
-              <td>{team.W}</td>
-              <td>{team.L}</td>
+              <td>{team.WINS}</td>
+              <td>{team.LOSSES}</td>
               <td>{(team.WinPCT * 100).toFixed(1)}%</td>
-              <td>{team.GB}</td>
+              <td>{team.ConferenceGamesBack}</td>
               <td>{team.L10}</td>
               <td>{team.CurrentStreak}</td>
             </tr>

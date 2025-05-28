@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from "react";
 import { format, subDays, addDays } from "date-fns";
 import { BrowserRouter as Router, Route, Routes, useNavigate } from "react-router-dom";
-import GameDetails from "./gameDetails"; // Import GameDetails page
+import GameDetails from "./gameDetails";
 import Teams from "./Teams";
 import Standings from "./Standings";
 import StatLeaders from "./StatLeaders";
 import Navbar from "./Navbar";
-import Playoffs from "./Playoffs";
-
+import TeamDetails from "./TeamDetails";
+import PlayerDetails from "./PlayerDetails";
 
 // Function to get the team logo URL based on the team tricode
 const getTeamLogo = (teamId) => 
@@ -31,8 +31,8 @@ function Home() {
       const liveData = await liveResponse.json();
       const pastData = await pastResponse.json();
 
-      console.log("🔵 Live Games Data:", liveData);
-      console.log("🟢 Past Games Data:", pastData);
+      console.log("Live Games Data:", liveData);
+      console.log("Past Games Data:", pastData);
 
       const pastGamesFiltered = pastData.past_games.filter(game =>
         game.gameTimePST.startsWith(formattedDate)
@@ -45,13 +45,13 @@ function Home() {
         allGames = pastGamesFiltered;
       }
 
-      console.log("📅 All Games for Selected Date:", allGames);
+      console.log("All Games for Selected Date:", allGames);
       setGames(allGames);
 
       sessionStorage.setItem("games", JSON.stringify(allGames));
 
     } catch (error) {
-      console.error("❌ Error fetching games:", error);
+      console.error("Error fetching games:", error);
     }
     setLoading(false);
   };
@@ -62,11 +62,11 @@ function Home() {
     if (savedGames) {
       setGames(JSON.parse(savedGames));
     } else {
-      fetchGames(); // ✅ No param
+      fetchGames(); 
     }
   
     const interval = setInterval(() => {
-      fetchGames(); // ✅ No param
+      fetchGames(); 
     }, 35000);
   
     return () => clearInterval(interval);
@@ -157,28 +157,9 @@ const appContainer = {
   backgroundColor: "#f4f4f4",
 };
 
-const navbarStyle = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  backgroundColor: "#333",
-  padding: "15px 20px",
-  color: "white",
-  position: "sticky",
-  top: "0",
-  zIndex: "100",
-  width: "100%",
-  boxSizing: "border-box",
-};
-
 const logoStyle = {
   cursor: "pointer",
   margin: "0",
-};
-
-const navLinksStyle = {
-  display: "flex",
-  gap: "15px",
 };
 
 const tabStyle = {
@@ -188,21 +169,6 @@ const tabStyle = {
   border: "none",
   cursor: "pointer",
   fontSize: "16px",
-};
-
-const activeTabStyle = {
-  ...tabStyle,
-  borderBottom: "2px solid white",
-  fontWeight: "bold",
-};
-
-const searchInputStyle = {
-  padding: "10px",
-  fontSize: "16px",
-  borderRadius: "5px",
-  border: "1px solid #ddd",
-  width: "250px",
-  textAlign: "center",
 };
 
 const dateNavStyle = {
@@ -226,10 +192,6 @@ const buttonStyle = {
   color: "white",
   borderRadius: "5px",
   cursor: "pointer",
-};
-
-const contentContainer = {
-  padding: "20px",
 };
 
 const gameListContainer = {
@@ -275,9 +237,10 @@ export default function App() {
         <Route path="/" element={<Home />} />
         <Route path="/game/:gameId" element={<GameDetails />} />
         <Route path="/teams" element={<Teams />} />
+        <Route path="/teams/:teamCode" element={<TeamDetails />} />
+        <Route path="/player/:playerId" element={<PlayerDetails />} />
         <Route path="/standings" element={<Standings />} />
         <Route path="/stat-leaders" element={<StatLeaders />} />
-        <Route path="/playoffs" element={<Playoffs />} />
       </Routes>
     </Router>
   );

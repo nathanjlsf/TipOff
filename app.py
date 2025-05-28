@@ -1,17 +1,19 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-from nba_api.live.nba.endpoints import scoreboard, playbyplay, boxscore, leaguestandings
-from nba_api.stats.endpoints import leaguegamefinder, alltimeleadersgrids, playercareerstats, leagueleaders
+from nba_api.live.nba.endpoints import scoreboard, playbyplay, boxscore
+from nba_api.stats.endpoints import leaguegamefinder, alltimeleadersgrids, leagueleaders, leaguestandingsv3
 from pymongo import MongoClient
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 import os, logging, threading, time, pytz, csv, re, requests
+import numpy as np
+import pandas as pd
 
 # Flask App
 app = Flask(__name__)
 
 # Enable CORS
-CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})  # Allow the frontend running at localhost:5173
+CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}}) 
 
 # Set timezone to Pacific Standard Time (PST)
 PST = pytz.timezone("America/Los_Angeles")
@@ -24,7 +26,7 @@ load_dotenv()
 
 MONGO_URI = os.getenv("MONGO_URI")
 if not MONGO_URI:
-    raise ValueError("❌ MONGO_URI is not set. Check your .env file.")
+    raise ValueError("MONGO_URI is not set. Check your .env file.")
 
 client = MongoClient(MONGO_URI)
 db = client["NBA_DB"]
@@ -65,7 +67,7 @@ def convert_status_to_pst(status):
         return status.replace("ET", "PST")
     return status
 
-# 🔄 **Save Game Updates to CSV**
+# **Save Game Updates to CSV**
 def log_to_csv(game_data):
     """
     Logs game updates to a CSV file.
@@ -92,15 +94,15 @@ def log_to_csv(game_data):
                 game_data.get("playoffs", "N/A")  # Playoff series text
             ])
         
-        logging.info(f"📜 Logged game {game_data.get('gameId', 'N/A')} to CSV.")
+        logging.info(f"Logged game {game_data.get('gameId', 'N/A')} to CSV.")
     
     except Exception as e:
-        logging.error(f"❌ Error logging to CSV: {str(e)}")
+        logging.error(f"Error logging to CSV: {str(e)}")
 
-# 🏀 **Fetch Live NBA Games and Store in MongoDB**
+# **Fetch Live NBA Games and Store in MongoDB**
 def fetch_live_games():
     try:
-        logging.info("📡 Fetching live games from NBA API...")
+        logging.info("Fetching live games from NBA API...")
         
         # Retrieve scoreboard data as dictionary
         scoreboard_data = scoreboard.ScoreBoard().get_dict()
@@ -109,7 +111,7 @@ def fetch_live_games():
         games = scoreboard_data.get("scoreboard", {}).get("games", [])
 
         if not games:
-            logging.warning("⚠️ No live games returned from API.")
+            logging.warning("No live games returned from API.")
             return
 
         today_pst = get_today_pst()
@@ -164,12 +166,12 @@ def fetch_live_games():
                 log_to_csv(game_data)
                 updated_count += 1
 
-        logging.info(f"🔄 Updated {updated_count} live games.")
+        logging.info(f"Updated {updated_count} live games.")
 
     except Exception as e:
-        logging.error(f"❌ Error fetching NBA live data: {e}")
+        logging.error(f"Error fetching NBA live data: {e}")
 
-# 🔄 **Move Past Games at Midnight PST**
+# **Move Past Games at Midnight PST**
 def move_past_games():
     while True:
         now_pst = datetime.now(timezone.utc).astimezone(PST)
@@ -177,7 +179,7 @@ def move_past_games():
 
         # Wait until midnight PST
         sleep_time = (midnight_pst - now_pst).total_seconds()
-        logging.info(f"🕛 Waiting {sleep_time} seconds until midnight PST to move games.")
+        logging.info(f"Waiting {sleep_time} seconds until midnight PST to move games.")
         time.sleep(sleep_time)
 
         # Move all today's live games to past games
@@ -194,23 +196,23 @@ def move_past_games():
                 )
 
             live_games_collection.delete_many({"date": {"$lt": datetime.combine(today_pst, datetime.max.time(), PST)}})
-            logging.info(f"✅ Moved {len(past_games)} games to PastGames.")
+            logging.info(f"Moved {len(past_games)} games to PastGames.")
 
-# 📅 **Past Games API**
+# **Past Games API**
 @app.route("/past-games", methods=["GET"])
 def get_past_games():
     try:
         # Get the target date from query parameters (default to yesterday)
         target_date = request.args.get("date", (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d"))
 
-        logging.info(f"📡 Fetching past games from the current season for {target_date}...")
+        logging.info(f"Fetching past games from the current season for {target_date}...")
 
         # Fetch all past games for the current season
         games_data = leaguegamefinder.LeagueGameFinder(season_nullable="2023-24", season_type_nullable="Regular Season").get_dict()
         games = games_data['resultSets'][0]['rowSet']
 
         if not games:
-            logging.warning(f"⚠️ No past games found for {target_date}.")
+            logging.warning(f"No past games found for {target_date}.")
             return jsonify({"past_games": []})  # Return an empty list instead of an error
 
         past_games_data = []
@@ -242,11 +244,11 @@ def get_past_games():
 
             past_games_data.append(past_game)
 
-        logging.info(f"📡 Sending {len(past_games_data)} past games to frontend.")
+        logging.info(f"Sending {len(past_games_data)} past games to frontend.")
         return jsonify({"past_games": past_games_data})
 
     except Exception as e:
-        logging.error(f"❌ Error retrieving past game data: {str(e)}")
+        logging.error(f"Error retrieving past game data: {str(e)}")
         return jsonify({"error": f"Error retrieving data: {str(e)}"}), 500
 
 # Helper function to convert "PT00M57.10S" to "00:57"
@@ -264,14 +266,14 @@ def format_game_clock(game_clock):
 @app.route("/live-games", methods=["GET"])
 def get_live_games():
     try:
-        logging.info("📡 Fetching live games from NBA API...")
+        logging.info("Fetching live games from NBA API...")
 
         # Retrieve live game data from the NBA API
         scoreboard_data = scoreboard.ScoreBoard().get_dict()
         games = scoreboard_data.get("scoreboard", {}).get("games", [])
 
         if not games:
-            logging.warning("⚠️ No live games found.")
+            logging.warning("No live games found.")
             return jsonify({"live_games": []})  # Return an empty list instead of an error
 
         live_games_data = []
@@ -317,14 +319,14 @@ def get_live_games():
 
             live_games_data.append(live_game)
 
-        logging.info(f"📡 Sending {len(live_games_data)} live games to frontend.")
+        logging.info(f"Sending {len(live_games_data)} live games to frontend.")
         return jsonify({"live_games": live_games_data})
 
     except Exception as e:
-        logging.error(f"❌ Error retrieving live game data: {str(e)}")
+        logging.error(f"Error retrieving live game data: {str(e)}")
         return jsonify({"error": f"Error retrieving data: {str(e)}"}), 500
 
-# 📺 **Live Game Boxscore API Endpoint**
+# **Live Game Boxscore API Endpoint**
 @app.route("/game-boxscore/<game_id>", methods=["GET"])
 def get_game_boxscore(game_id):
     try:
@@ -433,7 +435,7 @@ def get_game_boxscore(game_id):
         return jsonify(game_boxscore)
 
     except Exception as e:
-        logging.error(f"❌ Error fetching game boxscore: {str(e)}")
+        logging.error(f"Error fetching game boxscore: {str(e)}")
         return jsonify({"error": f"Error retrieving game boxscore: {str(e)}"}), 500
     
 @app.route("/all-time-leaders", methods=["GET"])
@@ -485,9 +487,8 @@ def get_all_time_playoff_leaders():
 @app.route("/current-season-leaders", methods=["GET"])
 def get_current_season_leaders():
     try:
-        # You can dynamically get the season if you want, here hardcoded for now
-        season = request.args.get("season", "2024-25")  # Default to 2024-25
-        season_type = request.args.get("season_type", "Regular Season")  # Or "Playoffs"
+        season = request.args.get("season", "2024-25") 
+        season_type = request.args.get("season_type", "Regular Season")
 
         data = leagueleaders.LeagueLeaders(
             season=season,
@@ -508,10 +509,12 @@ def get_current_season_leaders():
 
 @app.route("/player-career-stats/<int:player_id>", methods=["GET"])
 def get_player_career_stats(player_id):
+    from nba_api.stats.endpoints import playercareerstats, commonplayerinfo
+
     try:
         data = playercareerstats.PlayerCareerStats(player_id=player_id).get_dict()
+        career = data["resultSets"][0] 
 
-        career = data["resultSets"][0]  # Regular Season Totals
         career_stats = [
             {
                 "season": row[1],
@@ -531,46 +534,161 @@ def get_player_career_stats(player_id):
             } for row in career["rowSet"]
         ]
 
-        return jsonify({"player_id": player_id, "career_stats": career_stats})
+        info = commonplayerinfo.CommonPlayerInfo(player_id=player_id).get_dict()
+        full_name = info['resultSets'][0]['rowSet'][0][3] 
+
+        return jsonify({
+            "player_id": player_id,
+            "name": full_name,
+            "career_stats": career_stats
+        })
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     
 @app.route("/standings", methods=["GET"])
 def get_standings():
     try:
-        standings = leaguestandings.LeagueStandings(season="2024-25", season_type="Regular Season")
+        standings = leaguestandingsv3.LeagueStandingsV3(season="2024-25", season_type="Regular Season")
         data = standings.get_data_frames()[0]
 
-        # Convert DataFrame to JSON-serializable list
-        standings_list = data.to_dict(orient="records")
+        data_cleaned = data.replace({np.nan: None, pd.NaT: None})
+
+        standings_list = data_cleaned.to_dict(orient="records")
 
         return jsonify(standings_list)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     
-@app.route("/playoff-bracket", methods=["GET"])
-def get_playoff_bracket():
+@app.route("/team-info/<team_code>", methods=["GET"])
+def get_team_info(team_code):
+    from nba_api.stats.static import teams
+
+    team_code_to_id = {
+        "ATL": 1610612737, "BOS": 1610612738, "BKN": 1610612751, "CHA": 1610612766,
+        "CHI": 1610612741, "CLE": 1610612739, "DAL": 1610612742, "DEN": 1610612743,
+        "DET": 1610612765, "GSW": 1610612744, "HOU": 1610612745, "IND": 1610612754,
+        "LAC": 1610612746, "LAL": 1610612747, "MEM": 1610612763, "MIA": 1610612748,
+        "MIL": 1610612749, "MIN": 1610612750, "NOP": 1610612740, "NYK": 1610612752,
+        "OKC": 1610612760, "ORL": 1610612753, "PHI": 1610612755, "PHX": 1610612756,
+        "POR": 1610612757, "SAC": 1610612758, "SAS": 1610612759, "TOR": 1610612761,
+        "UTA": 1610612762, "WAS": 1610612764,
+    }
+
     try:
-        response = requests.get("https://cdn.nba.com/static/json/staticData/playoffBracket.json")
-        data = response.json()
-        return jsonify(data)
+        team_id = team_code_to_id.get(team_code.upper())
+        if not team_id:
+            return jsonify({"error": "Invalid team code"}), 400
+
+        logging.info(f"Fetching info for team ID {team_id} ({team_code})")
+
+        team = next(t for t in teams.get_teams() if t["id"] == team_id)
+        logging.info(f"Team found: {team}")
+
+        standings_data = leaguestandingsv3.LeagueStandingsV3(season="2024-25").get_data_frames()[0]
+
+        logging.info(f"Standings data retrieved with shape: {standings_data.shape}")
+
+        row = standings_data[standings_data["TeamID"] == team_id]
+        if row.empty:
+            logging.error(f"No row found for team ID {team_id} in standings.")
+            return jsonify({"error": "Team not found in standings"}), 404
+
+        row = row.iloc[0]
+
+        return jsonify({
+            "id": team_id,
+            "full_name": team["full_name"],
+            "abbreviation": team["abbreviation"],
+            "conference": row["Conference"],
+            "division": row["Division"],
+            "wins": int(row["WINS"]),
+            "losses": int(row["LOSSES"])
+        })
+    except Exception as e:
+        logging.exception("Error in /team-info route")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/team-roster/<team_code>", methods=["GET"])
+def get_team_roster(team_code):
+    from nba_api.stats.endpoints import commonteamroster
+
+    team_code_to_id = {
+        "ATL": 1610612737, "BOS": 1610612738, "BKN": 1610612751, "CHA": 1610612766,
+        "CHI": 1610612741, "CLE": 1610612739, "DAL": 1610612742, "DEN": 1610612743,
+        "DET": 1610612765, "GSW": 1610612744, "HOU": 1610612745, "IND": 1610612754,
+        "LAC": 1610612746, "LAL": 1610612747, "MEM": 1610612763, "MIA": 1610612748,
+        "MIL": 1610612749, "MIN": 1610612750, "NOP": 1610612740, "NYK": 1610612752,
+        "OKC": 1610612760, "ORL": 1610612753, "PHI": 1610612755, "PHX": 1610612756,
+        "POR": 1610612757, "SAC": 1610612758, "SAS": 1610612759, "TOR": 1610612761,
+        "UTA": 1610612762, "WAS": 1610612764,
+    }
+
+    try:
+        team_id = team_code_to_id.get(team_code.upper())
+        if not team_id:
+            return jsonify({"error": "Invalid team code"}), 400
+
+        data = commonteamroster.CommonTeamRoster(team_id=team_id).get_dict()
+
+        players = [
+            {
+                "id": row[14],  # PERSON_ID
+                "name": row[3],
+                "number": row[6],
+                "position": row[7]
+            }
+            for row in data["resultSets"][0]["rowSet"]
+        ]
+        return jsonify({"roster": players})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+        
+
+@app.route("/team-games/<team_code>", methods=["GET"])
+def get_team_games(team_code):
+    from nba_api.stats.static import teams
+    from nba_api.stats.endpoints import teamgamelog
+
+    team_map = {t["abbreviation"]: t["id"] for t in teams.get_teams()}
+    team_id = team_map.get(team_code.upper())
+
+    if not team_id:
+        return jsonify({"error": "Invalid team code"}), 400
+
+    try:
+        log = teamgamelog.TeamGameLog(team_id=team_id, season="2024-25")
+        df = log.get_data_frames()[0]
+
+        games = []
+        for _, row in df.iterrows():
+            games.append({
+                "date": row.get("GAME_DATE", "N/A"),
+                "opponent": row.get("MATCHUP"),
+                "result": f"{row.get('WL', '?')} {row.get('PTS', '?')}-{row.get('PTS_OPP', '?')}",
+                "gameId": row.get("Game_ID", None)
+            })
+
+        return jsonify({"games": games})
+    except Exception as e:
+        import traceback
+        traceback.print_exc() 
+        return jsonify({"error": str(e)}), 500
     
-# 📺 **Live Game Play-by-Play API Endpoint**
+# **Live Game Play-by-Play API Endpoint**
 @app.route("/game-playbyplay/<game_id>", methods=["GET"])
 def get_game_playbyplay(game_id):
     try:
         # Fetch play-by-play data
         playbyplay_data = playbyplay.PlayByPlay(game_id).get_dict()
 
-        logging.info(f"📺 Play-by-Play Data for game {game_id} received.")
+        logging.info(f"Play-by-Play Data for game {game_id} received.")
 
         # Safely get the actions list
         actions = playbyplay_data.get('game', {}).get('actions', [])
 
         if not actions:
-            logging.warning(f"⚠️ No play-by-play actions found for game {game_id}")
+            logging.warning(f"No play-by-play actions found for game {game_id}")
             return jsonify({"error": "No play-by-play actions data found for this game."}), 404
 
         # Extract relevant fields
@@ -607,7 +725,7 @@ def get_game_playbyplay(game_id):
         return jsonify({"play_by_play": detailed_actions})
 
     except Exception as e:
-        logging.error(f"❌ Error fetching play-by-play data: {str(e)}")
+        logging.error(f"Error fetching play-by-play data: {str(e)}")
         return jsonify({"error": f"Error retrieving play-by-play data: {str(e)}"}), 500
 
 if __name__ == "__main__":
