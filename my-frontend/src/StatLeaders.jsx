@@ -17,14 +17,13 @@ export default function StatLeaders() {
         setPlayoffLeaders(playoffs);
         setCurrentSeasonLeaders(processCurrentLeaders(current));
       } catch (error) {
-        console.error("❌ Error fetching leaders:", error);
+        console.error("Error fetching leaders:", error);
       }
     };
 
     fetchLeaders();
   }, []);
 
-  // 🔥 Helper to process and split Current Season leaders
   const processCurrentLeaders = (players) => {
     const categories = {
       "Points Per Game": [],

@@ -1,7 +1,7 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from nba_api.live.nba.endpoints import scoreboard, playbyplay, boxscore
-from nba_api.stats.endpoints import leaguegamefinder, alltimeleadersgrids, leagueleaders, leaguestandingsv3
+from nba_api.stats.endpoints import leaguegamefinder, alltimeleadersgrids, leagueleaders, leaguestandingsv3, scoreboardv2
 from pymongo import MongoClient
 from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
@@ -202,54 +202,112 @@ def move_past_games():
 @app.route("/past-games", methods=["GET"])
 def get_past_games():
     try:
-        # Get the target date from query parameters (default to yesterday)
-        target_date = request.args.get("date", (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d"))
+        from nba_api.stats.endpoints import leaguestandingsv3
 
-        logging.info(f"Fetching past games from the current season for {target_date}...")
+        # Optional date param
+        date_param = request.args.get("date")
+        if date_param:
+            game_date = datetime.strptime(date_param, "%Y-%m-%d")
+        else:
+            game_date = datetime.today() - timedelta(days=1)
 
-        # Fetch all past games for the current season
-        games_data = leaguegamefinder.LeagueGameFinder(season_nullable="2023-24", season_type_nullable="Regular Season").get_dict()
-        games = games_data['resultSets'][0]['rowSet']
+        date_str = game_date.strftime("%m/%d/%Y")
+        logging.info(f"Fetching past games for: {date_str}")
 
-        if not games:
-            logging.warning(f"No past games found for {target_date}.")
-            return jsonify({"past_games": []})  # Return an empty list instead of an error
+        # Get standings data
+        standings_df = leaguestandingsv3.LeagueStandingsV3(season="2024-25").get_data_frames()[0]
+        standings_df = standings_df[["TeamID", "WINS", "LOSSES"]]
 
-        past_games_data = []
+        # Get scoreboard data
+        scoreboard = scoreboardv2.ScoreboardV2(game_date=date_str)
+        games_df = scoreboard.game_header.get_data_frame()
+        linescore_df = scoreboard.line_score.get_data_frame()
 
-        for game in games:
-            game_date_str = game[4]  # Date format is YYYY-MM-DD
-            if game_date_str != target_date:
-                continue  # Skip games not from the requested date
+        past_games = []
 
-            past_game = {
-                "gameId": game[2],
-                "gameTimePST": convert_to_pst(game_date_str),
+        for _, game in games_df.iterrows():
+            game_id = game["GAME_ID"]
+            home_id = game["HOME_TEAM_ID"]
+            away_id = game["VISITOR_TEAM_ID"]
+
+            home_team = linescore_df[(linescore_df["GAME_ID"] == game_id) & (linescore_df["TEAM_ID"] == home_id)]
+            away_team = linescore_df[(linescore_df["GAME_ID"] == game_id) & (linescore_df["TEAM_ID"] == away_id)]
+
+            if home_team.empty or away_team.empty:
+                continue
+
+            # Get wins/losses from standings
+            home_stats = standings_df[standings_df["TeamID"] == home_id].iloc[0]
+            away_stats = standings_df[standings_df["TeamID"] == away_id].iloc[0]
+
+            past_games.append({
+                "gameId": game_id,
                 "homeTeam": {
-                    "teamTricode": game[6],  # Home team abbreviation
-                    "score": game[22],  # Home team score
+                    "teamId": int(home_team.iloc[0]["TEAM_ID"]),
+                    "teamTricode": home_team.iloc[0]["TEAM_ABBREVIATION"],
+                    "score": int(home_team.iloc[0]["PTS"]),
+                    "wins": int(home_stats["WINS"]),
+                    "losses": int(home_stats["LOSSES"]),
                 },
                 "awayTeam": {
-                    "teamTricode": game[7],  # Away team abbreviation
-                    "score": game[23],  # Away team score
+                    "teamId": int(away_team.iloc[0]["TEAM_ID"]),
+                    "teamTricode": away_team.iloc[0]["TEAM_ABBREVIATION"],
+                    "score": int(away_team.iloc[0]["PTS"]),
+                    "wins": int(away_stats["WINS"]),
+                    "losses": int(away_stats["LOSSES"]),
                 },
-                "status": "Final",
-                "arena": "Unknown",  # LeagueGameFinder does not provide arena data
-                "location": {
-                    "city": "Unknown",
-                    "state": "Unknown",
-                },
-                "playoffs": "N/A",
-            }
+                "status": game["GAME_STATUS_TEXT"],
+                "gameTimePST": game_date.strftime("%Y-%m-%d")
+            })
 
-            past_games_data.append(past_game)
-
-        logging.info(f"Sending {len(past_games_data)} past games to frontend.")
-        return jsonify({"past_games": past_games_data})
+        return jsonify({"past_games": past_games})
 
     except Exception as e:
-        logging.error(f"Error retrieving past game data: {str(e)}")
-        return jsonify({"error": f"Error retrieving data: {str(e)}"}), 500
+        logging.exception("Error in /past-games route")
+        return jsonify({"error": str(e)}), 500
+    
+@app.route("/scheduled-games", methods=["GET"])
+def get_scheduled_games():
+    try:
+        date_param = request.args.get("date")
+        if date_param:
+            game_date = datetime.strptime(date_param, "%Y-%m-%d")
+        else:
+            game_date = datetime.today() + timedelta(days=1)  # default to tomorrow
+
+        formatted_date = game_date.strftime("%m/%d/%Y")
+
+        scoreboard = scoreboardv2.ScoreboardV2(game_date=formatted_date)
+        games_df = scoreboard.game_header.get_data_frame()
+
+        scheduled_games = []
+
+        for _, game in games_df.iterrows():
+            if game["GAME_STATUS_TEXT"] == "Scheduled":
+                scheduled_games.append({
+                    "gameId": game["GAME_ID"],
+                    "status": game["GAME_STATUS_TEXT"],
+                    "gameTimePST": game_date.strftime("%Y-%m-%d"),
+                    "homeTeam": {
+                        "teamId": int(game["HOME_TEAM_ID"]),
+                        "teamTricode": game["HOME_TEAM_ABBREVIATION"],
+                        "wins": 0,
+                        "losses": 0,
+                        "score": 0
+                    },
+                    "awayTeam": {
+                        "teamId": int(game["VISITOR_TEAM_ID"]),
+                        "teamTricode": game["VISITOR_TEAM_ABBREVIATION"],
+                        "wins": 0,
+                        "losses": 0,
+                        "score": 0
+                    }
+                })
+
+        return jsonify({ "scheduled_games": scheduled_games })
+
+    except Exception as e:
+        return jsonify({ "error": str(e) }), 500
 
 # Helper function to convert "PT00M57.10S" to "00:57"
 def format_game_clock(game_clock):

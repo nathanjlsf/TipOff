@@ -23,36 +23,33 @@ function Home() {
   const fetchGames = async () => {
     setLoading(true);
     const formattedDate = format(selectedDate, "yyyy-MM-dd");
+    const isToday = formattedDate === format(new Date(), "yyyy-MM-dd");
 
     try {
-      const liveResponse = await fetch("http://127.0.0.1:5000/live-games");
-      const pastResponse = await fetch("http://127.0.0.1:5000/past-games");
+      const liveData = isToday
+        ? await (await fetch("http://127.0.0.1:5000/live-games")).json()
+        : { live_games: [] };
 
-      const liveData = await liveResponse.json();
-      const pastData = await pastResponse.json();
+      const pastData = await (await fetch(`http://127.0.0.1:5000/past-games?date=${formattedDate}`)).json();
 
-      console.log("Live Games Data:", liveData);
-      console.log("Past Games Data:", pastData);
+      const allGames = [
+        ...(liveData.live_games || []),
+        ...(pastData.past_games || [])
+      ];
 
-      const pastGamesFiltered = pastData.past_games.filter(game =>
-        game.gameTimePST.startsWith(formattedDate)
-      );
-
-      let allGames = [];
-      if (formattedDate === format(new Date(), "yyyy-MM-dd")) {
-        allGames = [...liveData.live_games, ...pastGamesFiltered];
-      } else if (selectedDate < new Date()) {
-        allGames = pastGamesFiltered;
+      if (selectedDate > new Date()) {
+        const futureResponse = await fetch(`http://127.0.0.1:5000/scheduled-games?date=${formattedDate}`);
+        const futureData = await futureResponse.json();
+        allGames.push(...(futureData.scheduled_games || []));
       }
 
-      console.log("All Games for Selected Date:", allGames);
+      console.log("Games for", formattedDate, allGames);
       setGames(allGames);
-
       sessionStorage.setItem("games", JSON.stringify(allGames));
-
     } catch (error) {
       console.error("Error fetching games:", error);
     }
+
     setLoading(false);
   };
 
@@ -101,44 +98,49 @@ function Home() {
 
       {/* Game List */}
       <div style={gameListContainer}>
-        {filteredGames.map((game) => (
-          <button 
-            key={game.gameId} 
-            style={gameCardStyle}
-            onClick={() => handleGameClick(game)}
-          >
-            <div style={scoreContainer}>
-              {/* Home Team */}
-              <div style={teamContainer}>
-                <span style={teamNameStyle}>{game.homeTeam.teamTricode}</span>
-                <img src={getTeamLogo(game.homeTeam.teamId)} alt={game.homeTeam.teamTricode} style={teamLogo} />
-                <span style={recordStyle}>{game.homeTeam.wins} - {game.homeTeam.losses}</span>
+        {filteredGames.length === 0 && !loading ? (
+          <div style={noGamesStyle}>No games on this date 💤</div>
+        ) : (
+          filteredGames.map((game) => (
+            <button 
+              key={game.gameId} 
+              style={gameCardStyle}
+              onClick={() => handleGameClick(game)}
+            >
+              <div style={scoreContainer}>
+                {/* Home Team */}
+                <div style={teamContainer}>
+                  <span style={teamNameStyle}>{game.homeTeam.teamTricode}</span>
+                  <img src={getTeamLogo(game.homeTeam.teamId)} alt={game.homeTeam.teamTricode} style={teamLogo} />
+                  <span style={recordStyle}>{game.homeTeam.wins} - {game.homeTeam.losses}</span>
+                </div>
+
+                {/* Score */}
+                <span style={scoreStyle}>{game.homeTeam.score} - {game.awayTeam.score}</span>
+
+                {/* Away Team */}
+                <div style={teamContainer}>
+                  <span style={teamNameStyle}>{game.awayTeam.teamTricode}</span>
+                  <img src={getTeamLogo(game.awayTeam.teamId)} alt={game.awayTeam.teamTricode} style={teamLogo} />
+                  <span style={recordStyle}>{game.awayTeam.wins} - {game.awayTeam.losses}</span>
+                </div>
               </div>
 
-              {/* Score */}
-              <span style={scoreStyle}>{game.homeTeam.score} - {game.awayTeam.score}</span>
-
-              {/* Away Team */}
-              <div style={teamContainer}>
-                <span style={teamNameStyle}>{game.awayTeam.teamTricode}</span>
-                <img src={getTeamLogo(game.awayTeam.teamId)} alt={game.awayTeam.teamTricode} style={teamLogo} />
-                <span style={recordStyle}>{game.awayTeam.wins} - {game.awayTeam.losses}</span>
-              </div>
-            </div>
-
-            {/* Quarter & Game Clock */}
-            {game.status.includes("Qtr") && !game.status.includes("End") ? (
-              <div style={gameStatusStyle}>
-                <span>⏳ {game.status} - {game.gameClock}</span>
-              </div>
-            ) : (
-              <div style={gameStatusStyle}>
-                <span>{game.status}</span>
-              </div>
-            )}
-          </button>
-        ))}
+              {/* Quarter & Game Clock */}
+              {game.status.includes("Qtr") && !game.status.includes("End") ? (
+                <div style={gameStatusStyle}>
+                  <span>⏳ {game.status} - {game.gameClock}</span>
+                </div>
+              ) : (
+                <div style={gameStatusStyle}>
+                  <span>{game.status}</span>
+                </div>
+              )}
+            </button>
+          ))
+        )}
       </div>
+
     </div>
   );
 }
@@ -221,6 +223,14 @@ const gameStatusStyle = {
   fontWeight: "bold",
   marginTop: "10px",
   color: "#d32f2f",
+};
+
+const noGamesStyle = {
+  fontSize: "20px",
+  fontWeight: "bold",
+  color: "#666",
+  textAlign: "center",
+  padding: "50px 0"
 };
 
 const scoreContainer = { display: "flex", alignItems: "center", justifyContent: "center", gap: "70px" };
