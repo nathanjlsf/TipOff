@@ -10,7 +10,7 @@ export default function Standings() {
         const data = await response.json();
         setStandings(data);
       } catch (error) {
-        console.error("❌ Error fetching standings:", error);
+        console.error("Error fetching standings:", error);
       }
     };
 

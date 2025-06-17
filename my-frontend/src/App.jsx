@@ -9,7 +9,6 @@ import Navbar from "./Navbar";
 import TeamDetails from "./TeamDetails";
 import PlayerDetails from "./PlayerDetails";
 
-// Function to get the team logo URL based on the team tricode
 const getTeamLogo = (teamId) => 
   `https://cdn.nba.com/logos/nba/${teamId}/primary/L/logo.svg`;
 
@@ -20,9 +19,9 @@ function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const navigate = useNavigate();
 
-  const fetchGames = async () => {
+  const fetchGamesForDate = async (date) => {
     setLoading(true);
-    const formattedDate = format(selectedDate, "yyyy-MM-dd");
+    const formattedDate = format(date, "yyyy-MM-dd");
     const isToday = formattedDate === format(new Date(), "yyyy-MM-dd");
 
     try {
@@ -32,18 +31,17 @@ function Home() {
 
       const pastData = await (await fetch(`http://127.0.0.1:5000/past-games?date=${formattedDate}`)).json();
 
-      const allGames = [
+      let allGames = [
         ...(liveData.live_games || []),
-        ...(pastData.past_games || [])
+        ...(pastData.past_games || []),
       ];
 
-      if (selectedDate > new Date()) {
+      if (date > new Date()) {
         const futureResponse = await fetch(`http://127.0.0.1:5000/scheduled-games?date=${formattedDate}`);
         const futureData = await futureResponse.json();
         allGames.push(...(futureData.scheduled_games || []));
       }
 
-      console.log("Games for", formattedDate, allGames);
       setGames(allGames);
       sessionStorage.setItem("games", JSON.stringify(allGames));
     } catch (error) {
@@ -55,24 +53,23 @@ function Home() {
 
   // Fetch games based on the selected date
   useEffect(() => {
-    const savedGames = sessionStorage.getItem("games");
-    if (savedGames) {
-      setGames(JSON.parse(savedGames));
-    } else {
-      fetchGames(); 
-    }
-  
-    const interval = setInterval(() => {
-      fetchGames(); 
-    }, 35000);
-  
+    fetchGamesForDate(selectedDate);
+    const interval = setInterval(() => fetchGamesForDate(selectedDate), 35000);
     return () => clearInterval(interval);
-  }, [selectedDate]);  
+  }, [selectedDate]);
 
   // Change date handlers
-  const prevDay = () => setSelectedDate(subDays(selectedDate, 1));
-  const nextDay = () => setSelectedDate(addDays(selectedDate, 1));
-  const resetToToday = () => setSelectedDate(new Date());
+  const prevDay = () => {
+    setSelectedDate(subDays(selectedDate, 1));
+  };
+
+  const nextDay = () => {
+    setSelectedDate(addDays(selectedDate, 1));
+  };
+
+  const resetToToday = () => {
+    setSelectedDate(new Date());
+  };
 
   // Navigate to game details page
   const handleGameClick = (game) => {

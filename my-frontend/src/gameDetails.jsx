@@ -1,12 +1,28 @@
 import React, { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+
+function estimateWinProbability(homeScore, awayScore, quarter = 1, timeLeftInQuarter = 0) {
+  const totalTime = 48 * 60;
+  const timeElapsed = (quarter - 1) * 12 * 60 + (12 * 60 - timeLeftInQuarter);
+  const timeFactor = timeElapsed / totalTime;
+
+  const scoreDiff = homeScore - awayScore;
+  let baseProbability = 50 + scoreDiff * 1.5;
+  const finalProbability = baseProbability + Math.abs(scoreDiff) * timeFactor * 1.5;
+
+  if (isNaN(finalProbability)) return 50; 
+
+  return Math.min(100, Math.max(0, finalProbability));
+}
 
 function GameDetails() {
   const { gameId } = useParams();
   const [gameDetails, setGameDetails] = useState(null);
   const [playByPlay, setPlayByPlay] = useState([]);
-  const [viewingTeam, setViewingTeam] = useState("home"); // "home" or "away"
-  const [activeTab, setActiveTab] = useState("summary"); // "summary", "boxscore", "playbyplay"
+  const [viewingTeam, setViewingTeam] = useState("home");
+  const [activeTab, setActiveTab] = useState("summary"); 
+  const [winProbHistory, setWinProbHistory] = useState([]);
 
   const formatClock = (isoTime) => {
     if (!isoTime || !isoTime.startsWith("PT")) return "00:00";
@@ -23,7 +39,7 @@ function GameDetails() {
       const data = await response.json();
       setGameDetails(data);
     } catch (error) {
-      console.error("❌ Error fetching game details:", error);
+      console.error("Error fetching game details:", error);
     }
   };
 
@@ -35,7 +51,7 @@ function GameDetails() {
         setPlayByPlay(data.play_by_play);
       }
     } catch (error) {
-      console.error("❌ Error fetching play-by-play data:", error);
+      console.error("Error fetching play-by-play data:", error);
     }
   };
 
@@ -51,7 +67,58 @@ function GameDetails() {
     return () => clearInterval(interval);
   }, [gameId]);
 
+  useEffect(() => {
+    if (!gameDetails) return;
+
+    const now = new Date().toLocaleTimeString();
+    const prob = estimateWinProbability(
+      gameDetails.homeTeam.score,
+      gameDetails.awayTeam.score,
+      gameDetails.summary?.quarter ?? 4,
+      gameDetails.summary?.secondsRemaining ?? 0
+    );
+    setWinProbHistory([{ time: now, homeProb: prob, awayProb: 100 - prob }]);
+  }, [gameDetails]);
+
+  useEffect(() => {
+    if (!playByPlay.length || !gameDetails) return;
+
+    const flowData = playByPlay
+      .filter(a => a.scoreHome != null && a.scoreAway != null && a.clock)
+      .map(a => {
+        // 1) split the “MM:SS” clock
+        const [minStr = "00", secStr = "00"] = a.clock.split(":");
+        const min = parseInt(minStr, 10) || 0;
+        const sec = parseInt(secStr, 10) || 0;
+
+        // 2) compute elapsed seconds since tip-off
+        const elapsed =
+          (a.period - 1) * 12 * 60 +     // full quarters
+          (12 * 60 - (min * 60 + sec));  // time into current quarter
+
+        // 3) grab scores & estimate
+        const home = a.scoreHome;
+        const away = a.scoreAway;
+        const prob = estimateWinProbability(home, away, a.period, min * 60 + sec);
+        const homeProb = Math.round(prob * 10) / 10;
+        const awayProb = Math.round((100 - prob) * 10) / 10;
+
+        return {
+          x: elapsed,                                       // numeric axis
+          label: `Q${a.period} ${min}:${sec.toString().padStart(2,"0")}`,  
+          home, away, homeProb, awayProb
+        };
+      });
+
+    setWinProbHistory(flowData);
+  }, [playByPlay, gameDetails]);
+
   if (!gameDetails) return <p>Loading game details...</p>;
+
+  const maxScore = Math.max(
+    gameDetails.homeTeam.score,
+    gameDetails.awayTeam.score
+  );
 
   const activeTeam = viewingTeam === "home" ? gameDetails.homeTeam : gameDetails.awayTeam;
 
@@ -177,6 +244,45 @@ function GameDetails() {
         ))}
       </tbody>
     </table>
+
+    <h3>Predicted Win Probability Over Time</h3>
+    <ResponsiveContainer width="100%" height={300}>
+      <LineChart data={winProbHistory}>
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis
+          type="category"
+          dataKey="period"
+          ticks={[1,2,3,4]}
+          tickFormatter={p => {
+            switch (p) {
+              case 1: return "1st";
+              case 2: return "2nd";
+              case 3: return "3rd";
+              case 4: return "4th";
+              default: return "";
+            }
+          }}
+        />
+        <YAxis domain={[0,100]} />
+        <Tooltip />
+        <Legend />
+        <Line dataKey="homeProb" stroke="#007bff" name="Home Win %" />
+        <Line dataKey="awayProb" stroke="#d32f2f" name="Away Win %" />
+      </LineChart>
+    </ResponsiveContainer>
+
+    <h3 style={sectionTitle}>Game Flow</h3>
+    <ResponsiveContainer width="100%" height={300}>
+      <LineChart data={winProbHistory}>
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis dataKey="time" interval={Math.ceil(winProbHistory.length / 10)} />
+        <YAxis domain={[0, maxScore + 5]}/>
+        <Tooltip />
+        <Legend />
+        <Line dataKey="home" stroke="#003DA5" name="Home Score" />
+        <Line dataKey="away" stroke="#C9082A" name="Away Score" />
+      </LineChart>
+    </ResponsiveContainer>
   </>
 )}
 
